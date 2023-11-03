@@ -6,12 +6,25 @@ import (
 	"strings"
 )
 
-func GetStatusCode(domain string) (int, error) {
+func GetStatusCode(domain string, headers []map[string]string) (int, error) {
 	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
 		domain = "http://" + domain
 	}
 
-	response, err := http.Get(domain)
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", domain, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, headerMap := range headers {
+		for key, value := range headerMap {
+			req.Header.Set(key, value)
+		}
+	}
+
+	response, err := client.Do(req)
 	if err != nil {
 		if urlErr, ok := err.(*url.Error); ok {
 			if urlErr.Op == "Get" && urlErr.URL == domain && urlErr.Err != nil {
