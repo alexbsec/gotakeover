@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func GetStatusCode(domain string, headers []map[string]string) (int, error) {
+func Get(domain string, headers []map[string]string) (*http.Response, error) {
 	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
 		domain = "http://" + domain
 	}
@@ -15,7 +15,7 @@ func GetStatusCode(domain string, headers []map[string]string) (int, error) {
 
 	req, err := http.NewRequest("GET", domain, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	for _, headerMap := range headers {
@@ -28,16 +28,16 @@ func GetStatusCode(domain string, headers []map[string]string) (int, error) {
 	if err != nil {
 		if urlErr, ok := err.(*url.Error); ok {
 			if urlErr.Op == "Get" && urlErr.URL == domain && urlErr.Err != nil {
-				return 0, err
+				return nil, err
 			} else {
-				return 0, err
+				return nil, err
 			}
 		} else {
-			return 0, err
+			return nil, err
 		}
 	}
 
 	defer response.Body.Close()
 
-	return response.StatusCode, nil
+	return response, nil
 }

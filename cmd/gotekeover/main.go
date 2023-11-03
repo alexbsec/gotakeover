@@ -112,13 +112,15 @@ func main() {
 				fmt.Printf("[ INFO ] Domain '%s' has NXDOMAIN status header\n", domain)
 				fmt.Printf("[ INFO ] Requesting domain '%s'...\n", domain)
 			}
-			status, err := requests.GetStatusCode(domain, headers)
+			response, err := requests.Get(domain, headers)
 			if err != nil && !*simpleOutput {
 				fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] %s\n"+ColorReset, err)
 				continue
 			}
 
-			if status == 404 {
+			// Check for fingerprint
+
+			if response.StatusCode == 404 {
 				if !*simpleOutput {
 					fmt.Printf(Bold+ColorCyan+"[ VULN ] Domain '%s' seems to be vulnerable for subdomain takeover\n"+ColorReset, domain)
 				} else {
