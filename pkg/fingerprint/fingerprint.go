@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 )
@@ -22,29 +23,31 @@ type ServiceFingerprint struct {
 }
 
 func JSONtoServiceFingerprint() []ServiceFingerprint {
-	jsonFile, err := os.Open("fingerprints.json")
+	res, err := http.Get("https://raw.githubusercontent.com/alexbsec/gotakeover/master/cmd/gotekeover/fingerprints.json")
 	if err != nil {
-		fmt.Println("Error opening JSON file:", err)
+		fmt.Println("Error fetching JSON file:", err)
 		os.Exit(1)
 	}
-	defer jsonFile.Close()
 
-	byteValue, err := io.ReadAll(jsonFile)
+	if res.StatusCode != http.StatusOK {
+		fmt.Printf("bad status: %s\n", res.Status)
+		os.Exit(1)
+	}
+
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Println("Error reading JSON file:", err)
+		fmt.Printf("reading response body failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	var serviceFingerprints []ServiceFingerprint
-
-	err = json.Unmarshal(byteValue, &serviceFingerprints)
+	err = json.Unmarshal(body, &serviceFingerprints)
 	if err != nil {
-		fmt.Println("Error unmarshalling JSON:", err)
+		fmt.Printf("unmarshalling JSON failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	return serviceFingerprints
-
 }
 
 func CheckFingerprint(responseBody string) (bool, string) {
