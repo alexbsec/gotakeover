@@ -5,12 +5,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/alexbsec/gotakeover/pkg/digparser"
+	"github.com/alexbsec/gotakeover/pkg/fingerprint"
 	"github.com/alexbsec/gotakeover/pkg/requests"
 )
 
@@ -51,16 +53,85 @@ func parseHeaders(headerStr string) ([]map[string]string, error) {
 	return headers, nil
 }
 
+func GetDomain(domain string, headers []map[string]string, mode string, vulnDomains []string, simpleOutput bool, timeout time.Duration) []string {
+	response, err := requests.Get(domain, headers, timeout)
+	if err != nil && !simpleOutput {
+		fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] %s\n"+ColorReset, err)
+		return vulnDomains
+	}
+	defer response.Body.Close()
+
+	bodyBytes, err := io.ReadAll(response.Body)
+
+	if err != nil && !simpleOutput {
+		fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] %s\n"+ColorReset, err)
+		return vulnDomains
+	}
+
+	if mode == "fmode" {
+		foundPrint, serviceName := fingerprint.CheckFingerprint(string(bodyBytes))
+		if foundPrint {
+			if !simpleOutput {
+				fmt.Printf(Bold+ColorCyan+"[ INFO ] Domain '%s' is using '%s' as service and might be vulnerable\n"+ColorReset, domain, serviceName)
+			} else {
+				fmt.Println(domain)
+			}
+			vulnDomains = append(vulnDomains, domain)
+		} else if !simpleOutput {
+			fmt.Printf(ColorBlue+"[ INFO ] Domain '%s' is not vulnerable\n", domain)
+		}
+	} else if mode == "smode" {
+		if response.StatusCode == 404 {
+			if !simpleOutput {
+				fmt.Printf(Bold+ColorCyan+"[ VULN ] Domain '%s' seems to be vulnerable for subdomain takeover\n"+ColorReset, domain)
+			} else {
+				fmt.Println(domain)
+			}
+
+			vulnDomains = append(vulnDomains, domain)
+		} else if !simpleOutput {
+			fmt.Printf(ColorBlue+"[ INFO ] Domain '%s' is not vulnerable\n", domain)
+		}
+	}
+
+	return vulnDomains
+}
+
+func Printfv(format string, verbose bool, so bool, a ...any) {
+	if verbose && !so {
+		fmt.Printf(format, a...)
+	}
+}
+
 func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	verbose := flag.Bool("v", false, "Verbose mode")
+	smode := flag.Bool("smode", false, "Simple status mode. Look for 404 status code to evaluate vulnerability. Default mode")
+	fmode := flag.Bool("fmode", false, "Fingerprint mode. Look for known fingerprints to evaluate vulnerability")
 	timeout := flag.Duration("t", 5, "Timeout time for quitting dig command")
 	simpleOutput := flag.Bool("so", false, "Prints only vulnerable domains in stdout")
 	header := flag.String("H", "", "Header for GET request semi-colon separated (Ex: HeaderName1: HeaderValue1; HeaderName2: HeaderValue2...)")
 
 	flag.Parse()
+
+	var mode string
+
+	if !*smode && !*fmode {
+		*smode = true
+		mode = "smode"
+	}
+
+	if *smode == *fmode {
+		fmt.Println(ColorRed)
+		fmt.Println("[ ERROR ] Cannot set two investigating modes at once")
+		os.Exit(1)
+	}
+
+	if *fmode {
+		mode = "fmode"
+	}
 
 	headers, err := parseHeaders(*header)
 
@@ -90,10 +161,10 @@ func main() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout*time.Second)
-		defer cancel()
 
 		cmd := exec.CommandContext(ctx, "dig", "CNAME", domain)
 		out, err := cmd.CombinedOutput()
+		defer cancel()
 
 		if ctx.Err() == context.DeadlineExceeded && !*simpleOutput {
 			fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] DIG command timed out for domain '%s'\n"+ColorReset, domain)
@@ -107,30 +178,18 @@ func main() {
 		lines := digparser.ParseLine(string(out))
 		header := digparser.GetHeader(lines)
 		status := header["status"]
-		if status == "NXDOMAIN" {
-			if *verbose && !*simpleOutput {
-				fmt.Printf("[ INFO ] Domain '%s' has NXDOMAIN status header\n", domain)
-				fmt.Printf("[ INFO ] Requesting domain '%s'...\n", domain)
+		if status == "NXDOMAIN" || status == "SERVFAIL" || status == "REFUSED" || status == "no servers could be reached." {
+			Printfv(ColorBlue+"[ INFO ] Domain '%s' has %s status header. Investigating...\n"+ColorReset, *verbose, *simpleOutput, domain)
+			vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout)
+		} else if status == "NOERROR" {
+			Printfv(ColorBlue+"[ INFO ] Domain '%s' has %s status header. Investigating Answer Section...\n"+ColorReset, *verbose, *simpleOutput, domain, status)
+			answerSection := digparser.GetAnswerSection(lines)
+			if len(answerSection) > 0 {
+				Printfv(ColorBlue+"[ INFO ] CNAME of %s points to %s. Requesting CNAME...\n"+ColorReset, *verbose, *simpleOutput, domain, answerSection["cname"])
+				vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout)
+			} else {
+				Printfv(ColorBlue+"[ INFO ] Empty Answer Section. Domain '%s' probably not vulnerable\n", *verbose, *simpleOutput, domain)
 			}
-			response, err := requests.Get(domain, headers)
-			if err != nil && !*simpleOutput {
-				fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] %s\n"+ColorReset, err)
-				continue
-			}
-
-			// Check for fingerprint
-
-			if response.StatusCode == 404 {
-				if !*simpleOutput {
-					fmt.Printf(Bold+ColorCyan+"[ VULN ] Domain '%s' seems to be vulnerable for subdomain takeover\n"+ColorReset, domain)
-				} else {
-					fmt.Println(Bold + ColorCyan + domain + ColorReset)
-				}
-
-				vulnDomains = append(vulnDomains, domain)
-			}
-		} else if *verbose && !*simpleOutput {
-			fmt.Printf(ColorBlue+"[ RES ] Domain '%s' is not vulnerable to subdomain takeover\n"+ColorReset, domain)
 		}
 	}
 
@@ -141,9 +200,8 @@ func main() {
 	if !*simpleOutput {
 		fmt.Println()
 		fmt.Println(ColorCyan + "Results:")
-		fmt.Printf(ColorCyan+"Found %d vulnerable domains\n"+ColorReset, len(vulnDomains))
+		fmt.Printf(ColorCyan+"Found %d domains possibly expired, prone to takeover\n"+ColorReset, len(vulnDomains))
 		if len(vulnDomains) > 0 {
-			fmt.Println(ColorRed, "Vulnerable domain list:")
 			for _, d := range vulnDomains {
 				fmt.Println(ColorRed, d)
 			}
