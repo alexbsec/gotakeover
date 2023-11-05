@@ -36,3 +36,22 @@ func GetHeader(lines []string) map[string]string {
 
 	return headerInfo
 }
+
+func GetAnswerSection(lines []string) map[string]string {
+	answerInfo := make(map[string]string)
+	answerPattern := regexp.MustCompile(`(\S+)\s+(\d+)\s+IN\s+CNAME\s+(\S+)\.`)
+
+	for _, line := range lines {
+		if answerPattern.MatchString(line) {
+			matches := answerPattern.FindStringSubmatch(line)
+			if len(matches) == 4 {
+				answerInfo["subdomain"] = matches[1]
+				answerInfo["ttl"] = matches[2]
+				answerInfo["cname"] = matches[3]
+				break
+			}
+		}
+	}
+
+	return answerInfo
+}

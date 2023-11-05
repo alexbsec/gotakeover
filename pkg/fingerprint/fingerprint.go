@@ -46,11 +46,11 @@ var serviceFingerprint = []ServiceFingerprint{
 	},
 	{
 		ServiceName: "Squarespace",
-		Pattern:     "If you're the owner of this website, please log in to your Squarespace account",
+		Pattern:     "If you are the site owner, click below to login.",
 	},
 }
 
-func checkFingerprint(responseBody string) (bool, string) {
+func CheckFingerprint(responseBody string) (bool, string) {
 	for _, fingerprintn := range serviceFingerprint {
 		if strings.Contains(responseBody, fingerprintn.Pattern) {
 			return true, fingerprintn.ServiceName

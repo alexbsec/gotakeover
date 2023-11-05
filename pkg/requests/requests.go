@@ -4,14 +4,17 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
-func Get(domain string, headers []map[string]string) (*http.Response, error) {
+func Get(domain string, headers []map[string]string, timeout time.Duration) (*http.Response, error) {
 	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
 		domain = "http://" + domain
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: timeout * time.Second,
+	}
 
 	req, err := http.NewRequest("GET", domain, nil)
 	if err != nil {
@@ -36,8 +39,6 @@ func Get(domain string, headers []map[string]string) (*http.Response, error) {
 			return nil, err
 		}
 	}
-
-	defer response.Body.Close()
 
 	return response, nil
 }
