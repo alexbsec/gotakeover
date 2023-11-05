@@ -27,6 +27,23 @@ const (
 	Bold        = "\033[1m"
 )
 
+func SaveOutput(save bool, writer *bufio.Writer, domain string) {
+	var err error
+	if save {
+		_, err = writer.WriteString(domain + "\n")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ ERROR ] Could not write to file: '%s'\n", err)
+			os.Exit(1)
+		}
+
+		err = writer.Flush()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ ERROR ] Could not flush writer: '%s'\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
 func parseHeaders(headerStr string) ([]map[string]string, error) {
 	headerPairs := strings.Split(headerStr, ";")
 
@@ -53,7 +70,7 @@ func parseHeaders(headerStr string) ([]map[string]string, error) {
 	return headers, nil
 }
 
-func GetDomain(domain string, headers []map[string]string, mode string, vulnDomains []string, simpleOutput bool, timeout time.Duration) []string {
+func GetDomain(domain string, headers []map[string]string, mode string, vulnDomains []string, simpleOutput bool, timeout time.Duration, save bool, writer *bufio.Writer) []string {
 	response, err := requests.Get(domain, headers, timeout)
 	if err != nil && !simpleOutput {
 		fmt.Fprintf(os.Stderr, ColorRed+"[ ERROR ] %s\n"+ColorReset, err)
@@ -76,6 +93,8 @@ func GetDomain(domain string, headers []map[string]string, mode string, vulnDoma
 			} else {
 				fmt.Println(domain)
 			}
+
+			SaveOutput(save, writer, domain)
 			vulnDomains = append(vulnDomains, domain)
 		} else if !simpleOutput {
 			fmt.Printf(ColorBlue+"[ INFO ] Domain '%s' is not vulnerable\n", domain)
@@ -88,6 +107,7 @@ func GetDomain(domain string, headers []map[string]string, mode string, vulnDoma
 				fmt.Println(domain)
 			}
 
+			SaveOutput(save, writer, domain)
 			vulnDomains = append(vulnDomains, domain)
 		} else if !simpleOutput {
 			fmt.Printf(ColorBlue+"[ INFO ] Domain '%s' is not vulnerable\n", domain)
@@ -112,15 +132,32 @@ func main() {
 	fmode := flag.Bool("fmode", false, "Fingerprint mode. Look for known fingerprints to evaluate vulnerability")
 	timeout := flag.Duration("t", 5, "Timeout time for quitting dig command")
 	simpleOutput := flag.Bool("so", false, "Prints only vulnerable domains in stdout")
+	saveFile := flag.String("o", "", "Save the results into an output file specified by name")
 	header := flag.String("H", "", "Header for GET request semi-colon separated (Ex: HeaderName1: HeaderValue1; HeaderName2: HeaderValue2...)")
 
 	flag.Parse()
 
 	var mode string
+	var save bool
+	var writer *bufio.Writer
+	var file *os.File
+	var fileErr error
 
 	if !*smode && !*fmode {
 		*smode = true
 		mode = "smode"
+	}
+
+	if *saveFile != "" {
+		save = true
+		file, fileErr = os.OpenFile(*saveFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if fileErr != nil {
+			fmt.Fprintf(os.Stderr, "[ ERROR ] Cannot open file '%s' to write: '%s", *saveFile, fileErr)
+			return
+		}
+		defer file.Close()
+
+		writer = bufio.NewWriter(file)
 	}
 
 	if *smode == *fmode {
@@ -149,7 +186,7 @@ func main() {
 		fmt.Println(`| |_\ \| (_) || |_| (_| ||   <|  __/| (_) |\ V / |  __/| |    `)
 		fmt.Println(` \____/ \___/  \__|\__,_||_|\_\\___| \___/  \_/   \___||_|    `)
 		fmt.Println()
-		fmt.Println("------------------------------------------------------  v0.0.2" + ColorReset)
+		fmt.Println("------------------------------------------------------  v0.0.3" + ColorReset)
 	}
 
 	var vulnDomains []string
@@ -179,14 +216,14 @@ func main() {
 		header := digparser.GetHeader(lines)
 		status := header["status"]
 		if status == "NXDOMAIN" || status == "SERVFAIL" || status == "REFUSED" || status == "no servers could be reached." {
-			Printfv(ColorBlue+"[ INFO ] Domain '%s' has %s status header. Investigating...\n"+ColorReset, *verbose, *simpleOutput, domain)
-			vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout)
+			Printfv(ColorBlue+"[ INFO ] Domain '%s' has %s status header. Investigating...\n"+ColorReset, *verbose, *simpleOutput, domain, status)
+			vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout, save, writer)
 		} else if status == "NOERROR" {
 			Printfv(ColorBlue+"[ INFO ] Domain '%s' has %s status header. Investigating Answer Section...\n"+ColorReset, *verbose, *simpleOutput, domain, status)
 			answerSection := digparser.GetAnswerSection(lines)
 			if len(answerSection) > 0 {
 				Printfv(ColorBlue+"[ INFO ] CNAME of %s points to %s. Requesting CNAME...\n"+ColorReset, *verbose, *simpleOutput, domain, answerSection["cname"])
-				vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout)
+				vulnDomains = GetDomain(domain, headers, mode, vulnDomains, *simpleOutput, *timeout, save, writer)
 			} else {
 				Printfv(ColorBlue+"[ INFO ] Empty Answer Section. Domain '%s' probably not vulnerable\n", *verbose, *simpleOutput, domain)
 			}
